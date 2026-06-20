@@ -1347,6 +1347,21 @@ impl SettingsView {
             );
         }
 
+        // In local-only mode, hide hosted/commercial product surfaces that have
+        // no meaning without a Warp account: Teams, Referrals and Billing & Usage.
+        if ChannelState::is_local_only() {
+            nav_items.retain(|item| {
+                !matches!(
+                    item,
+                    SettingsNavItem::Page(
+                        SettingsSection::Teams
+                            | SettingsSection::Referrals
+                            | SettingsSection::BillingAndUsage
+                    )
+                )
+            });
+        }
+
         // Resolve the initial page: map internal backing-page sections to their default subpage.
         let initial_page = match page {
             Some(SettingsSection::AI) => SettingsSection::WarpAgent,

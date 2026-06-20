@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use warp_core::channel::{Channel, ChannelConfig, ChannelState, OzConfig, WarpServerConfig};
+use warp_core::features::FeatureFlag;
 use warp_core::AppId;
 
 // Simple wrapper around warp::run() for Warp OSS builds.
@@ -24,6 +25,18 @@ fn main() -> Result<()> {
     if cfg!(debug_assertions) {
         state = state.with_additional_features(warp_core::features::DEBUG_FLAGS);
     }
+    // This OSS build is configured as a fully local, account-free terminal.
+    // - SkipFirebaseAnonymousUser: boot straight into the terminal as a
+    //   logged-out local user (no sign-up, no log-in).
+    // - SoloUserByok + CustomInferenceEndpoints: let a solo user bring their own
+    //   API key and point any OpenAI-compatible inference endpoint (e.g. the
+    //   Vercel AI Gateway) at the AI features, without a Warp account.
+    // See `ChannelState::is_local_only`, which gates the rest of local mode.
+    state = state.with_additional_features(&[
+        FeatureFlag::SkipFirebaseAnonymousUser,
+        FeatureFlag::SoloUserByok,
+        FeatureFlag::CustomInferenceEndpoints,
+    ]);
     ChannelState::set(state);
 
     warp::run()

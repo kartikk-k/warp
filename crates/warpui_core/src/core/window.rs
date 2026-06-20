@@ -92,6 +92,15 @@ impl StoredView {
         }
     }
 
+    pub fn child_view_ids(&self, app: &AppContext) -> Vec<EntityId> {
+        match self {
+            StoredView::Gui(view) => view.child_view_ids(app),
+            // TUI views don't participate in the GUI view-transfer walk.
+            #[cfg(feature = "tui")]
+            StoredView::Tui(_) => Vec::new(),
+        }
+    }
+
     pub fn on_focus(
         &mut self,
         focus_ctx: &FocusContext,

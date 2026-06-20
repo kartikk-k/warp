@@ -15,4 +15,8 @@ pub mod paths;
 pub mod project_context;
 pub mod skills;
 mod telemetry;
+/// Direct, account-free transport to OpenAI-compatible inference endpoints
+/// (e.g. the Vercel AI Gateway) for local-only mode.
+#[cfg(not(target_family = "wasm"))]
+pub mod vercel_gateway;
 pub mod workspace;
