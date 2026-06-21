@@ -82,6 +82,17 @@ impl ChannelState {
         cfg!(debug_assertions) || matches!(Self::channel(), Channel::Local | Channel::Dev)
     }
 
+    /// Whether this build runs as a fully local, account-free terminal.
+    ///
+    /// In local-only mode there is no Warp sign-up / log-in, no cloud sync
+    /// (all data stays in the local SQLite database), and hosted-only product
+    /// surfaces such as Teams, Referrals and Billing are hidden. AI runs via
+    /// user-provided API keys against OpenAI-compatible endpoints. This is the
+    /// configuration shipped by the `warp-oss` binary.
+    pub fn is_local_only() -> bool {
+        matches!(Self::channel(), Channel::Oss)
+    }
+
     pub fn override_server_root_url(url: impl Into<Cow<'static, str>>) -> Result<(), ParseError> {
         let url = url.into();
         Url::parse(&url)?;
