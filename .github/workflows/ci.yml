@@ -109,22 +109,6 @@ jobs:
             runner: ${{ fromJSON(needs.params.outputs.macos-runner) }}
             is_self_hosted: ${{ contains(fromJSON(needs.params.outputs.macos-runner), 'self-hosted') }}
             extra_test_args: ""
-
-          - os: "linux"
-            name: "Linux"
-            # Use a larger (16 core, 64GB ram) runner on Linux to speed up execution time.
-            # https://github.com/warpdotdev/warp-internal/settings/actions/runners
-            runner: ubuntu-latest-large
-            # We don't (yet) have any self-hosted Linux runners.
-            is_self_hosted: false
-            extra_test_args: ""
-
-          - os: "windows"
-            name: "Windows"
-            runner: windows-latest-large
-            # We don't (yet) have any self-hosted Windows runners.
-            is_self_hosted: false
-            extra_test_args: "--exclude command-signatures-v2 --exclude warp_js"
     runs-on: ${{ matrix.runner }}
     needs: params
     # Make sure an ID token is created with the necessary permissions to use
@@ -443,103 +427,6 @@ jobs:
     # The maximum timeout for the entire job is 6 hours:
     # https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepstimeout-minutes
 
-  remote-server-tests:
-    name: Run Linux remote-server integration tests
-    # Temporarily disabled while reconsidering the approach.
-    if: false
-    timeout-minutes: 25
-    runs-on: ubuntu-latest-large
-    needs: params
-    concurrency:
-      # The dedicated VM uses a fixed binary path, so serialize remote-server
-      # deploy/test jobs across workflow runs to avoid cross-run clobbering.
-      group: remote-server-test-vm
-      cancel-in-progress: false
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - uses: ./.github/actions/prepare_environment
-        with:
-          target_os: linux
-          is_self_hosted: false
-          install_test_deps: true
-
-      - name: Install Shells
-        uses: ConorMacBride/install-package@3e7ad059e07782ee54fa35f827df52aae0626f30 # v1
-        with:
-          apt: zsh fish
-
-      - name: Echo default Bash
-        id: echo_bash
-        shell: bash
-        run: |
-          DEFAULT_BASH_PATH="$(command -pv bash)"
-          echo "default_bash_path=$DEFAULT_BASH_PATH" >> $GITHUB_OUTPUT
-          DEFAULT_BASH_VERSION="$($DEFAULT_BASH_PATH --version)"
-          echo "::notice title=Remote Server Tests - Default Bash Version::$DEFAULT_BASH_VERSION"
-
-      - name: Install cargo nextest
-        uses: taiki-e/install-action@65851e10cd6c377f11a60e600abc07cb08643468 # v2.79.3
-        with:
-          tool: nextest
-
-      - name: Set up gcloud authentication for remote-server tests
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
-        with:
-          workload_identity_provider: projects/63595664881/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: github-ci-workflow@warp-ssh-integration-testing.iam.gserviceaccount.com
-
-      - name: Install gcloud CLI tool
-        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-        with:
-          version: '>= 397.0.0'
-
-      - name: Install remote server deploy dependencies
-        shell: bash
-        run: |
-          sudo apt-get install -y curl sshpass xz-utils
-          MUSL_CROSS_TAG="20250929"
-          MUSL_CROSS_TARGET="x86_64-unknown-linux-musl"
-          MUSL_CROSS_SHA256="6534870abd7dc327fd2e14cc53972d0552b21f47db5769505534f788537e3544"
-          MUSL_CROSS_ARCHIVE="$MUSL_CROSS_TARGET.tar.xz"
-          curl -fsSLO "https://github.com/cross-tools/musl-cross/releases/download/$MUSL_CROSS_TAG/$MUSL_CROSS_ARCHIVE"
-          echo "$MUSL_CROSS_SHA256  $MUSL_CROSS_ARCHIVE" | sha256sum -c -
-          sudo mkdir -p /opt/x-tools
-          sudo tar -xf "$MUSL_CROSS_ARCHIVE" -C /opt/x-tools
-          MUSL_CROSS_BIN="/opt/x-tools/$MUSL_CROSS_TARGET/bin"
-          echo "$MUSL_CROSS_BIN" >> "$GITHUB_PATH"
-          export PATH="$MUSL_CROSS_BIN:$PATH"
-          command -v "$MUSL_CROSS_TARGET-gcc"
-          command -v "$MUSL_CROSS_TARGET-g++"
-          rustup target add x86_64-unknown-linux-musl
-
-      - name: Deploy remote server binary to test VM
-        run: script/deploy_remote_server_to_test_vm
-
-      - name: Run remote-server integration tests
-        uses: coactions/setup-xvfb@b6b4fcfb9f5a895edadc3bc76318fae0ac17c8b3 # v1
-        with:
-          run: cargo nextest run ${{ env.WORKSPACE_TEST_ARGS }} -E "package(integration) and test(/remote_server/)"
-        env:
-          WARP_SHELL_PATH: ${{ steps.echo_bash.outputs.default_bash_path }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload results of remote-server integration tests to trunk.io
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
-        with:
-          junit-paths: target/nextest/ci/junit.xml
-          cli-version: 0.12.5
-          org-slug: warp
-          token: ${{ secrets.TRUNK_API_TOKEN }}
-          tags: type=integration,category=remote-server
-          variant: linux
-          use-cache: true
-
   database-migration:
     name: Database Migration (Diesel)
     timeout-minutes: 5
@@ -580,24 +467,6 @@ jobs:
             is_self_hosted: ${{ contains(fromJSON(needs.params.outputs.macos-runner), 'self-hosted') }}
             null_device: "/dev/null"
             clippy_excludes: "--exclude warp_completer"
-
-          - os: "linux"
-            name: "Linux"
-            # Use a larger (16 core, 64GB ram) runner on Linux to speed up execution time.
-            # https://github.com/warpdotdev/warp-internal/settings/actions/runners
-            runner: ubuntu-latest-large
-            # We don't (yet) have any self-hosted Linux runners.
-            is_self_hosted: false
-            null_device: "/dev/null"
-            clippy_excludes: "--exclude warp_completer"
-
-          - os: "windows"
-            name: "Windows"
-            runner: windows-latest-large
-            # We don't (yet) have any self-hosted Windows runners.
-            is_self_hosted: false
-            null_device: "NUL"
-            clippy_excludes: "--exclude warp_js --exclude command-signatures-v2"
     runs-on: ${{ matrix.runner }}
     needs: params
     #    if: ${{ needs.params.outputs.affects-rust-sources == 'true' }}
@@ -686,9 +555,6 @@ jobs:
         run: ./script/lint_powershell -ci
         shell: pwsh
 
-      - name: Validate repo-sync markers
-        uses: warpdotdev/repo-sync/actions/validate-markers@main
-
       - name: Check for incorrectly named test files
         run: |
           # Test files should end in _tests.rs, not _test.rs.
@@ -754,22 +620,6 @@ jobs:
             runner: ${{ fromJSON(needs.params.outputs.macos-runner) }}
             is_self_hosted: ${{ contains(fromJSON(needs.params.outputs.macos-runner), 'self-hosted') }}
             null_device: "/dev/null"
-
-          - os: "linux"
-            name: "Linux"
-            # Use a larger (16 core, 64GB ram) runner on Linux to speed up execution time.
-            # https://github.com/warpdotdev/warp-internal/settings/actions/runners
-            runner: ubuntu-latest-large
-            # We don't (yet) have any self-hosted Linux runners.
-            is_self_hosted: false
-            null_device: "/dev/null"
-
-          - os: "windows"
-            name: "Windows"
-            runner: windows-latest-large
-            # We don't (yet) have any self-hosted Windows runners.
-            is_self_hosted: false
-            null_device: "NUL"
 
           - os: "wasm"
             name: "wasm"
