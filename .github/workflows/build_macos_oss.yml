@@ -1,0 +1,121 @@
+name: Build macOS OSS App
+
+# Builds the local-only `warp-oss` macOS app on a GitHub-hosted macOS runner and
+# publishes an (unsigned) .dmg to a GitHub Release.
+#
+# Because this build is UNSIGNED, macOS Gatekeeper will warn on first launch.
+# To open it: right-click WarpOss.app -> Open (once), or run
+#   xattr -dr com.apple.quarantine /Applications/WarpOss.app
+#
+# Trigger it manually from the Actions tab (workflow_dispatch) or by pushing a
+# tag like `oss-v0.1.0`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/update (e.g. oss-v0.1.0)"
+        required: true
+        default: "oss-local"
+  push:
+    tags:
+      - "oss-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    # macos-latest is Apple Silicon (arm64); the produced app is arm64-only.
+    runs-on: macos-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build dependencies
+        run: |
+          set -euxo pipefail
+          # protoc: required by prost-build build scripts.
+          # create-dmg: used by script/macos/bundle to package the .dmg.
+          # jq: used by some of the bundling helper scripts.
+          brew install protobuf create-dmg jq
+
+      - name: Install Rust toolchain
+        run: |
+          set -euxo pipefail
+          # rust-toolchain.toml pins the channel; this makes rustup materialize it.
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add aarch64-apple-darwin
+
+      - name: Install cargo-bundle
+        run: |
+          set -euxo pipefail
+          # Same revision script/macos/bootstrap pins (supports the --profile flag).
+          cargo install cargo-bundle \
+            --git https://github.com/burtonageo/cargo-bundle \
+            --rev ae4c76e92c08774bf54ff077b1c52e3d1cd6c16d \
+            --locked || cargo install cargo-bundle --locked
+
+      - name: Build and bundle warp-oss (.app + .dmg, unsigned)
+        run: |
+          set -euxo pipefail
+          ./script/macos/bundle \
+            --channel oss \
+            --artifact app \
+            --arch aarch64 \
+            --nosign \
+            --release-tag "${{ steps.tag.outputs.tag }}"
+
+      - name: Locate artifacts
+        id: artifacts
+        run: |
+          set -euxo pipefail
+          DMG_PATH="$(find target -name 'WarpOss.dmg' -print -quit)"
+          if [ -z "$DMG_PATH" ]; then
+            echo "No WarpOss.dmg produced; build may have failed." >&2
+            exit 1
+          fi
+          echo "dmg=$DMG_PATH" >> "$GITHUB_OUTPUT"
+          # Also zip the .app as a fallback download.
+          APP_PATH="$(find target -name 'WarpOss.app' -type d -print -quit)"
+          if [ -n "$APP_PATH" ]; then
+            ( cd "$(dirname "$APP_PATH")" && ditto -c -k --keepParent "WarpOss.app" "$GITHUB_WORKSPACE/WarpOss.app.zip" )
+            echo "app_zip=$GITHUB_WORKSPACE/WarpOss.app.zip" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: warp-oss-macos
+          path: |
+            ${{ steps.artifacts.outputs.dmg }}
+            ${{ steps.artifacts.outputs.app_zip }}
+          if-no-files-found: warn
+
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euxo pipefail
+          # Create the release if it doesn't exist yet, then upload (clobbering
+          # any prior asset of the same name).
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "WarpOss (local-only) $TAG" \
+              --notes "Unsigned local-only macOS build of warp-oss. Gatekeeper will warn on first launch: right-click WarpOss.app -> Open, or run \`xattr -dr com.apple.quarantine /Applications/WarpOss.app\`. arm64 (Apple Silicon) only."
+          fi
+          gh release upload "$TAG" "${{ steps.artifacts.outputs.dmg }}" --clobber
+          if [ -n "${{ steps.artifacts.outputs.app_zip }}" ]; then
+            gh release upload "$TAG" "${{ steps.artifacts.outputs.app_zip }}" --clobber
+          fi
